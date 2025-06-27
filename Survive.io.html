@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Moomoo.io Clone</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        #gameCanvas {
+            background-color: #a3d9a5;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .health-bar {
+            height: 10px;
+            background-color: #4CAF50;
+            transition: width 0.3s;
+        }
+        .resource-icon {
+            width: 30px;
+            height: 30px;
+            display: inline-block;
+            margin-right: 5px;
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+        .building-option {
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .building-option:hover {
+            transform: scale(1.1);
+        }
+        .tooltip {
+            visibility: hidden;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px;
+            position: absolute;
+            z-index: 1;
+        }
+        .building-option:hover .tooltip {
+            visibility: visible;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .spinning {
+            animation: spin 2s linear infinite;
+        }
+    </style>
+</head>
+<body class="overflow-hidden bg-gray-900 text-white">
+    <canvas id="gameCanvas"></canvas>
+    
+    <!-- Game UI -->
+    <div class="fixed top-4 left-4 z-10 bg-gray-800 bg-opacity-80 p-3 rounded-lg">
+        <div class="flex items-center mb-2">
+            <div class="w-32 h-4 bg-red-900 rounded-full overflow-hidden">
+                <div id="healthBar" class="health-bar h-full" style="width: 100%"></div>
+            </div>
+            <span id="healthText" class="ml-2">100/100</span>
+        </div>
+        <div class="flex items-center mb-2">
+            <div class="resource-icon bg-yellow-600 rounded-full"></div>
+            <span id="goldCount">0</span>
+        </div>
+        <div class="flex items-center mb-2">
+            <div class="resource-icon bg-gray-300 rounded-full"></div>
+            <span id="stoneCount">0</span>
+        </div>
+        <div class="flex items-center">
+            <div class="resource-icon bg-green-700 rounded-full"></div>
+            <span id="woodCount">0</span>
+        </div>
+    </div>
+    
+    <div class="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-10 bg-gray-800 bg-opacity-80 p-3 rounded-lg flex space-x-4">
+        <div class="building-option p-2 bg-gray-700 rounded-lg text-center" onclick="selectBuilding('wall')">
+            <div class="w-12 h-12 bg-gray-400 mx-auto mb-1 rounded"></div>
+            <span>Wall (10 Wood)</span>
+            <div class="tooltip">Defensive structure to block enemies</div>
+        </div>
+        <div class="building-option p-2 bg-gray-700 rounded-lg text-center" onclick="selectBuilding('spike')">
+            <div class="w-12 h-12 bg-red-500 mx-auto mb-1 rounded-full"></div>
+            <span>Spike (15 Stone)</span>
+            <div class="tooltip">Damages enemies that touch it</div>
+        </div>
+        <div class="building-option p-2 bg-gray-700 rounded-lg text-center" onclick="selectBuilding('turret')">
+            <div class="w-12 h-12 bg-blue-500 mx-auto mb-1 rounded spinning"></div>
+            <span>Turret (25 Gold)</span>
+            <div class="tooltip">Automatically attacks nearby enemies</div>
+        </div>
+        <div class="building-option p-2 bg-gray-700 rounded-lg text-center" onclick="selectBuilding('mine')">
+            <div class="w-12 h-12 bg-yellow-600 mx-auto mb-1 rounded"></div>
+            <span>Mine (30 Wood)</span>
+            <div class="tooltip">Generates gold over time</div>
+        </div>
+    </div>
+    
+    <div class="fixed top-4 right-4 z-10 bg-gray-800 bg-opacity-80 p-3 rounded-lg">
+        <h2 class="text-xl font-bold mb-2">Controls</h2>
+        <p>WASD: Move</p>
+        <p>Left Click: Attack/Gather</p>
+        <p>Right Click: Place Building</p>
+        <p>1-4: Select Building</p>
+        <p class="mt-4 text-yellow-400">Goal: Survive and build your base!</p>
+    </div>
+    
+    <div id="gameOver" class="fixed inset-0 z-20 flex items-center justify-center bg-black bg-opacity-70 hidden">
+        <div class="bg-gray-800 p-8 rounded-lg text-center">
+            <h1 class="text-4xl font-bold text-red-500 mb-4">Game Over!</h1>
+            <p class="text-xl mb-6">You survived <span id="survivedTime">0</span> seconds</p>
+            <button onclick="resetGame()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg text-lg">
+                Play Again
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Game variables
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        // Player
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: 20,
+            color: '#3498db',
+            speed: 2.5,
+            health: 100,
+            maxHealth: 100,
+            invincibleTimer: 0,
+            attackDamage: 10,
+            attackRange: 60,
+            attackCooldown: 0,
+            attackRate: 10,
+            direction: { x: 0, y: 1 },
+            resources: {
+                gold: 0,
+                stone: 0,
+                wood: 0
+            }
+        };
+        
+        // Game state
+        let gameState = {
+            buildings: [],
+            resources: [],
+            enemies: [],
+            selectedBuilding: null,
+            gameTime: 0,
+            gameOver: false,
+            enemySpawnTimer: 0,
+            enemySpawnRate: 600,
+            keys: {}
+        };
+        
+        // Building types
+        const buildingTypes = {
+            wall: {
+                name: 'Wall',
+                cost: { wood: 10 },
+                health: 200,
+                color: '#95a5a6',
+                radius: 30,
+                width: 60,
+                height: 20
+            },
+            spike: {
+                name: 'Spike',
+                cost: { stone: 15 },
+                health: Infinity, // Makes it invincible
+                color: '#e74c3c',
+                radius: 20,
+                damage: 20, // 10% damage per tick (applied every 6 frames)
+                damageTimer: 0
+            },
+            turret: {
+                name: 'Turret',
+                cost: { gold: 25 },
+                health: 150,
+                color: '#3498db',
+                radius: 25,
+                attackRange: 200,
+                attackDamage: 15,
+                attackRate: 30
+            },
+            mine: {
+                name: 'Mine',
+                cost: { wood: 30 },
+                health: 120,
+                color: '#f1c40f',
+                radius: 30,
+                productionRate: 5,
+                productionTimer: 0
+            }
+        };
+        
+        // Resource types
+        const resourceTypes = {
+            tree: {
+                name: 'Tree',
+                color: '#27ae60',
+                radius: 25,
+                resource: 'wood',
+                amount: 20,
+                respawnTime: 300
+            },
+            rock: {
+                name: 'Rock',
+                color: '#7f8c8d',
+                radius: 30,
+                resource: 'stone',
+                amount: 15,
+                respawnTime: 400
+            },
+            gold: {
+                name: 'Gold',
+                color: '#f39c12',
+                radius: 20,
+                resource: 'gold',
+                amount: 5,
+                respawnTime: 500
+            }
+        };
+        
+        // Initialize resources
+        function initResources() {
+            gameState.resources = [];
+            
+            // Trees
+            for (let i = 0; i < 15; i++) {
+                gameState.resources.push({
+                    type: 'tree',
+                    x: Math.random() * (canvas.width - 200) + 100,
+                    y: Math.random() * (canvas.height - 200) + 100,
+                    amount: resourceTypes.tree.amount,
+                    respawnTimer: 0,
+                    active: true
+                });
+            }
+            
+            // Rocks
+            for (let i = 0; i < 10; i++) {
+                gameState.resources.push({
+                    type: 'rock',
+                    x: Math.random() * (canvas.width - 200) + 100,
+                    y: Math.random() * (canvas.height - 200) + 100,
+                    amount: resourceTypes.rock.amount,
+                    respawnTimer: 0,
+                    active: true
+                });
+            }
+            
+            // Gold
+            for (let i = 0; i < 5; i++) {
+                gameState.resources.push({
+                    type: 'gold',
+                    x: Math.random() * (canvas.width - 200) + 100,
+                    y: Math.random() * (canvas.height - 200) + 100,
+                    amount: resourceTypes.gold.amount,
+                    respawnTimer: 0,
+                    active: true
+                });
+            }
+        }
+        
+        // Select building
+        function selectBuilding(type) {
+            const building = buildingTypes[type];
+            let canAfford = true;
+            
+            for (const resource in building.cost) {
+                if (player.resources[resource] < building.cost[resource]) {
+                    canAfford = false;
+                    break;
+                }
+            }
+            
+            if (canAfford) {
+                gameState.selectedBuilding = type;
+                alert(`Selected ${building.name}. Right-click to place it.`);
+            } else {
+                alert(`Not enough resources for ${building.name}!`);
+            }
+        }
+        
+        // Place building
+        function placeBuilding(x, y) {
+            if (!gameState.selectedBuilding) return;
+            
+            const type = gameState.selectedBuilding;
+            const building = buildingTypes[type];
+            
+            // Check if position is valid (not overlapping with other buildings)
+            let validPosition = true;
+            for (const b of gameState.buildings) {
+                const dist = Math.sqrt((b.x - x) ** 2 + (b.y - y) ** 2);
+                if (dist < b.radius + building.radius + 20) {
+                    validPosition = false;
+                    break;
+                }
+            }
+            
+            if (!validPosition) {
+                alert("Cannot place building here - too close to another building!");
+                return;
+            }
+            
+            // Check resources
+            for (const resource in building.cost) {
+                if (player.resources[resource] < building.cost[resource]) {
+                    alert(`Not enough ${resource} to build ${building.name}!`);
+                    return;
+                }
+            }
+            
+            // Deduct resources
+            for (const resource in building.cost) {
+                player.resources[resource] -= building.cost[resource];
+            }
+            
+            // Create building
+            const newBuilding = {
+                type: type,
+                x: x,
+                y: y,
+                health: building.health,
+                maxHealth: building.health,
+                radius: building.radius,
+                color: building.color,
+                attackCooldown: 0,
+                productionTimer: 0
+            };
+            
+            // Special properties for certain buildings
+            if (type === 'turret') {
+                newBuilding.attackRange = building.attackRange;
+                newBuilding.attackDamage = building.attackDamage;
+                newBuilding.attackRate = building.attackRate;
+            } else if (type === 'mine') {
+                newBuilding.productionRate = building.productionRate;
+            }
+            
+            gameState.buildings.push(newBuilding);
+            updateResourceUI();
+        }
+        
+        // Update resource UI
+        function updateResourceUI() {
+            document.getElementById('goldCount').textContent = player.resources.gold;
+            document.getElementById('stoneCount').textContent = player.resources.stone;
+            document.getElementById('woodCount').textContent = player.resources.wood;
+            
+            // Update health UI
+            const healthPercent = (player.health / player.maxHealth) * 100;
+            document.getElementById('healthBar').style.width = `${healthPercent}%`;
+            document.getElementById('healthText').textContent = `${Math.floor(player.health)}/${player.maxHealth}`;
+        }
+        
+        // Handle player attack
+        function playerAttack() {
+            if (player.attackCooldown > 0) return;
+            
+            player.attackCooldown = player.attackRate;
+            
+            // Check if attacking a resource
+            for (const resource of gameState.resources) {
+                if (!resource.active) continue;
+                
+                const dist = Math.sqrt((resource.x - player.x) ** 2 + (resource.y - player.y) ** 2);
+                const resourceType = resourceTypes[resource.type];
+                
+                if (dist < player.attackRange + resourceType.radius) {
+                    resource.amount--;
+                    
+                    if (resource.amount <= 0) {
+                        resource.active = false;
+                        resource.respawnTimer = resourceType.respawnTime;
+                        player.resources[resourceType.resource] += resourceType.amount;
+                    } else {
+                        player.resources[resourceType.resource]++;
+                    }
+                    
+                    updateResourceUI();
+                    return;
+                }
+            }
+            
+            // Check if attacking an enemy
+            for (const enemy of gameState.enemies) {
+                const dist = Math.sqrt((enemy.x - player.x) ** 2 + (enemy.y - player.y) ** 2);
+                
+                if (dist < player.attackRange + enemy.radius) {
+                    enemy.health -= player.attackDamage;
+                    
+                    // Show damage effect
+                    ctx.fillStyle = '#ff0000';
+                    ctx.font = '20px Arial';
+                    ctx.fillText(`-${player.attackDamage}`, enemy.x, enemy.y - enemy.radius - 5);
+                    
+                    if (enemy.health <= 0) {
+                        // Enemy drops resources
+                        player.resources.gold += 2;
+                        player.resources.stone += 1;
+                        updateResourceUI();
+                        
+                        // Remove enemy
+                        const index = gameState.enemies.indexOf(enemy);
+                        if (index > -1) {
+                            gameState.enemies.splice(index, 1);
+                        }
+                    }
+                    
+                    return;
+                }
+            }
+        }
+        
+        // Spawn enemy
+        function spawnEnemy() {
+            // Determine spawn position at edge of screen
+            let x, y;
+            if (Math.random() < 0.5) {
+                x = Math.random() < 0.5 ? 0 : canvas.width;
+                y = Math.random() * canvas.height;
+            } else {
+                x = Math.random() * canvas.width;
+                y = Math.random() < 0.5 ? 0 : canvas.height;
+            }
+            
+            gameState.enemies.push({
+                x: x,
+                y: y,
+                radius: 15,
+                color: '#e74c3c',
+                speed: 0.3,
+                health: 30 + Math.floor(gameState.gameTime / 20),
+                maxHealth: 30 + Math.floor(gameState.gameTime / 20),
+                damage: 5 + Math.floor(gameState.gameTime / 30),
+                target: { x: player.x, y: player.y }
+            });
+        }
+        
+        // Update game state
+        function update() {
+            if (gameState.gameOver) return;
+            
+            gameState.gameTime++;
+            
+            // Update player attack cooldown
+            if (player.attackCooldown > 0) {
+                player.attackCooldown--;
+            }
+            
+            // Update invincibility timer
+            if (player.invincibleTimer > 0) {
+                player.invincibleTimer--;
+            }
+            
+            // Update resources
+            for (const resource of gameState.resources) {
+                if (!resource.active && resource.respawnTimer > 0) {
+                    resource.respawnTimer--;
+                    
+                    if (resource.respawnTimer <= 0) {
+                        resource.active = true;
+                        resource.amount = resourceTypes[resource.type].amount;
+                    }
+                }
+            }
+            
+            // Update buildings
+            for (const building of gameState.buildings) {
+                // Turret attacks
+                if (building.type === 'turret') {
+                    if (building.attackCooldown > 0) {
+                        building.attackCooldown--;
+                    } else {
+                        // Find closest enemy
+                        let closestEnemy = null;
+                        let closestDist = building.attackRange;
+                        
+                        for (const enemy of gameState.enemies) {
+                            const dist = Math.sqrt((enemy.x - building.x) ** 2 + (enemy.y - building.y) ** 2);
+                            
+                            if (dist < closestDist) {
+                                closestDist = dist;
+                                closestEnemy = enemy;
+                            }
+                        }
+                        
+                        // Attack enemy
+                        if (closestEnemy) {
+                            closestEnemy.health -= building.attackDamage;
+                            building.attackCooldown = building.attackRate;
+                            
+                            // Draw attack line
+                            ctx.beginPath();
+                            ctx.moveTo(building.x, building.y);
+                            ctx.lineTo(closestEnemy.x, closestEnemy.y);
+                            ctx.strokeStyle = '#3498db';
+                            ctx.lineWidth = 3;
+                            ctx.stroke();
+                            
+                            // Show damage effect
+                            ctx.fillStyle = '#ff0000';
+                            ctx.font = '16px Arial';
+                            ctx.fillText(`-${building.attackDamage}`, closestEnemy.x, closestEnemy.y - closestEnemy.radius - 5);
+                            
+                            if (closestEnemy.health <= 0) {
+                                // Remove enemy
+                                const index = gameState.enemies.indexOf(closestEnemy);
+                                if (index > -1) {
+                                    gameState.enemies.splice(index, 1);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Mine produces gold
+                if (building.type === 'mine') {
+                    building.productionTimer++;
+                    
+                    if (building.productionTimer >= 60) {
+                        player.resources.gold += building.productionRate;
+                        building.productionTimer = 0;
+                        updateResourceUI();
+                    }
+                }
+            }
+            
+            // Spawn enemies
+            gameState.enemySpawnTimer++;
+            if (gameState.enemySpawnTimer >= gameState.enemySpawnRate) {
+                gameState.enemySpawnTimer = 0;
+                
+                // Increase spawn rate over time
+                gameState.enemySpawnRate = 312; // Fixed 5.2 second spawn interval
+                
+                // Spawn more enemies as time progresses
+                const enemiesToSpawn = 1 + Math.floor(gameState.gameTime / 150);
+                for (let i = 0; i < enemiesToSpawn; i++) {
+                    spawnEnemy();
+                }
+            }
+            
+            // Update enemies
+            for (const enemy of gameState.enemies) {
+                // Update target (player or buildings)
+                if (gameState.buildings.length > 0 && Math.random() < 0.5) {
+                    // Target a random building
+                    const randomBuilding = gameState.buildings[Math.floor(Math.random() * gameState.buildings.length)];
+                    enemy.target = { x: randomBuilding.x, y: randomBuilding.y };
+                } else {
+                    // Target player
+                    enemy.target = { x: player.x, y: player.y };
+                }
+                
+                // Move toward target
+                const angle = Math.atan2(enemy.target.y - enemy.y, enemy.target.x - enemy.x);
+                enemy.x += Math.cos(angle) * enemy.speed;
+                enemy.y += Math.sin(angle) * enemy.speed;
+                
+                // Check collision with player
+                const distToPlayer = Math.sqrt((enemy.x - player.x) ** 2 + (enemy.y - player.y) ** 2);
+                if (distToPlayer < player.radius + enemy.radius && player.invincibleTimer <= 0) {
+                    player.health -= enemy.damage * 0.2; // Reduced damage for continuous collision
+                    player.invincibleTimer = 6; // 0.1 seconds at 60fps
+                    updateResourceUI();
+                    
+                    if (player.health <= 0) {
+                        gameOver();
+                    }
+                }
+                
+                // Check collision with buildings
+                for (const building of gameState.buildings) {
+                    const dist = Math.sqrt((enemy.x - building.x) ** 2 + (enemy.y - building.y) ** 2);
+                    
+                    if (dist < building.radius + enemy.radius) {
+                        // Wall collision - push enemy back
+                        if (building.type === 'wall') {
+                            const angle = Math.atan2(enemy.y - building.y, enemy.x - building.x);
+                            enemy.x += Math.cos(angle) * 0.5;
+                            enemy.y += Math.sin(angle) * 0.5;
+                            continue;
+                        }
+                        // Damage building
+                        building.health -= enemy.damage * 0.2; // Reduced damage for continuous collision
+                        
+                        // Spike damage to enemy (10% per 0.1s)
+                        if (building.type === 'spike') {
+                            building.damageTimer++;
+                            if (building.damageTimer >= 6) { // 0.1s at 60fps
+                                building.damageTimer = 0;
+                                enemy.health -= enemy.maxHealth * buildingTypes.spike.damage;
+                                
+                                // Show damage effect
+                                ctx.fillStyle = '#ff0000';
+                                ctx.font = '16px Arial';
+                                ctx.fillText(`-${Math.floor(enemy.maxHealth * buildingTypes.spike.damage)}`, enemy.x, enemy.y - enemy.radius - 5);
+                            }
+                        }
+                        
+                        // Wall collision - push enemy back
+                        if (building.type === 'wall') {
+                            const angle = Math.atan2(enemy.y - building.y, enemy.x - building.x);
+                            enemy.x += Math.cos(angle) * 0.5;
+                            enemy.y += Math.sin(angle) * 0.5;
+                        }
+                        
+                        // Check if building is destroyed
+                        if (building.health <= 0) {
+                            const index = gameState.buildings.indexOf(building);
+                            if (index > -1) {
+                                gameState.buildings.splice(index, 1);
+                            }
+                        }
+                        
+                        // Check if enemy is dead
+                        if (enemy.health <= 0) {
+                            // Enemy drops resources
+                            player.resources.gold += 2;
+                            player.resources.stone += 1;
+                            updateResourceUI();
+                            
+                            // Remove enemy
+                            const enemyIndex = gameState.enemies.indexOf(enemy);
+                            if (enemyIndex > -1) {
+                                gameState.enemies.splice(enemyIndex, 1);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Player movement
+            const moveX = (gameState.keys['d'] ? 1 : 0) + (gameState.keys['a'] ? -1 : 0);
+            const moveY = (gameState.keys['s'] ? 1 : 0) + (gameState.keys['w'] ? -1 : 0);
+            
+            if (moveX !== 0 || moveY !== 0) {
+                // Normalize diagonal movement
+                const length = Math.sqrt(moveX * moveX + moveY * moveY);
+                const normX = moveX / length;
+                const normY = moveY / length;
+                
+                player.x += normX * player.speed;
+                player.y += normY * player.speed;
+                
+                // Update player direction for attack animation
+                player.direction = { x: normX, y: normY };
+            }
+            
+            // Keep player within bounds
+            player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+            player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid background
+            ctx.strokeStyle = '#8bc34a';
+            ctx.lineWidth = 1;
+            const gridSize = 50;
+            
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Draw resources
+            for (const resource of gameState.resources) {
+                if (!resource.active) continue;
+                
+                const type = resourceTypes[resource.type];
+                ctx.fillStyle = type.color;
+                
+                if (resource.type === 'tree') {
+                    // Draw tree trunk
+                    ctx.fillRect(resource.x - 5, resource.y - 15, 10, 30);
+                    
+                    // Draw leaves
+                    ctx.beginPath();
+                    ctx.arc(resource.x, resource.y - 20, 20, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(resource.x, resource.y, type.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                // Draw resource amount
+                ctx.fillStyle = '#000';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(resource.amount, resource.x, resource.y + 5);
+            }
+            
+            // Draw buildings
+            for (const building of gameState.buildings) {
+                const type = buildingTypes[building.type];
+                ctx.fillStyle = building.color;
+                
+                if (building.type === 'wall') {
+                    ctx.fillRect(building.x - 30, building.y - 10, 60, 20);
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(building.x, building.y, building.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Draw building icon
+                    if (building.type === 'turret') {
+                        ctx.fillStyle = '#fff';
+                        ctx.beginPath();
+                        ctx.moveTo(building.x, building.y - 10);
+                        ctx.lineTo(building.x + 15, building.y + 10);
+                        ctx.lineTo(building.x - 15, building.y + 10);
+                        ctx.closePath();
+                        ctx.fill();
+                    } else if (building.type === 'mine') {
+                        ctx.fillStyle = '#fff';
+                        ctx.font = '16px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('$', building.x, building.y + 5);
+                    } else if (building.type === 'spike') {
+                        ctx.fillStyle = '#fff';
+                        for (let i = 0; i < 8; i++) {
+                            const angle = (i / 8) * Math.PI * 2;
+                            ctx.beginPath();
+                            ctx.moveTo(building.x, building.y);
+                            ctx.lineTo(
+                                building.x + Math.cos(angle) * building.radius,
+                                building.y + Math.sin(angle) * building.radius
+                            );
+                            ctx.lineWidth = 3;
+                            ctx.stroke();
+                        }
+                    }
+                }
+                
+                // Draw health bar
+                const healthPercent = building.health / type.health;
+                ctx.fillStyle = healthPercent > 0.6 ? '#2ecc71' : healthPercent > 0.3 ? '#f39c12' : '#e74c3c';
+                ctx.fillRect(
+                    building.x - building.radius,
+                    building.y - building.radius - 8,
+                    building.radius * 2 * healthPercent,
+                    4
+                );
+            }
+            
+            // Draw enemies
+            for (const enemy of gameState.enemies) {
+                ctx.fillStyle = enemy.color;
+                ctx.beginPath();
+                ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw health bar
+                const healthPercent = enemy.health / enemy.maxHealth;
+                ctx.fillStyle = healthPercent > 0.6 ? '#2ecc71' : healthPercent > 0.3 ? '#f39c12' : '#e74c3c';
+                ctx.fillRect(
+                    enemy.x - enemy.radius,
+                    enemy.y - enemy.radius - 8,
+                    enemy.radius * 2 * healthPercent,
+                    4
+                );
+                
+                // Draw angry eyes
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(enemy.x - 5, enemy.y - 3, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(enemy.x + 5, enemy.y - 3, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Draw player
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw player eyes (showing direction)
+            const eyeOffsetX = player.direction.x * 5;
+            const eyeOffsetY = player.direction.y * 5;
+            
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(player.x - 5 + eyeOffsetX, player.y - 5 + eyeOffsetY, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(player.x + 5 + eyeOffsetX, player.y - 5 + eyeOffsetY, 4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw attack indicator if attacking
+            if (player.attackCooldown > player.attackRate - 5) {
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(player.x, player.y);
+                ctx.lineTo(
+                    player.x + player.direction.x * player.attackRange,
+                    player.y + player.direction.y * player.attackRange
+                );
+                ctx.stroke();
+            }
+            
+            // Draw selected building preview
+            if (gameState.selectedBuilding) {
+                const building = buildingTypes[gameState.selectedBuilding];
+                ctx.fillStyle = building.color + '80'; // Semi-transparent
+                
+                if (gameState.selectedBuilding === 'wall') {
+                    ctx.fillRect(
+                        mouseX - 30,
+                        mouseY - 10,
+                        60,
+                        20
+                    );
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(mouseX, mouseY, building.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            
+            // Draw game time
+            ctx.fillStyle = '#fff';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'right';
+            ctx.fillText(`Time: ${Math.floor(gameState.gameTime / 60)}s`, canvas.width - 20, 30);
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            
+            if (!gameState.gameOver) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Game over
+        function gameOver() {
+            gameState.gameOver = true;
+            document.getElementById('survivedTime').textContent = Math.floor(gameState.gameTime / 60);
+            document.getElementById('gameOver').classList.remove('hidden');
+        }
+        
+        // Reset game
+        function resetGame() {
+            // Reset player
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            player.health = player.maxHealth;
+            player.resources = { gold: 0, stone: 0, wood: 0 };
+            
+            // Reset game state
+            gameState.buildings = [];
+            gameState.enemies = [];
+            gameState.selectedBuilding = null;
+            gameState.gameTime = 0;
+            gameState.gameOver = false;
+            gameState.enemySpawnTimer = 0;
+            gameState.enemySpawnRate = 100;
+            
+            // Initialize resources
+            initResources();
+            
+            // Update UI
+            updateResourceUI();
+            document.getElementById('gameOver').classList.add('hidden');
+            
+            // Start game loop
+            gameLoop();
+        }
+        
+        // Mouse position
+        let mouseX = 0;
+        let mouseY = 0;
+        
+        // Event listeners
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+        
+        window.addEventListener('keydown', (e) => {
+            gameState.keys[e.key.toLowerCase()] = true;
+            
+            // Select building with number keys
+            if (e.key === '1') selectBuilding('wall');
+            if (e.key === '2') selectBuilding('spike');
+            if (e.key === '3') selectBuilding('turret');
+            if (e.key === '4') selectBuilding('mine');
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            gameState.keys[e.key.toLowerCase()] = false;
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+        
+        canvas.addEventListener('click', (e) => {
+            if (e.button === 0) { // Left click
+                playerAttack();
+            }
+        });
+        
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (gameState.selectedBuilding) {
+                placeBuilding(e.clientX, e.clientY);
+            }
+        });
+        
+        // Start game
+        initResources();
+        gameLoop();
+    </script>
+</body>
+</html>
